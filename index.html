@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Laboratorio del Aire V3.13: Instrucciones Simplificadas</title>
+<title>Impacto Atmosferico V3.15: Simulación Atmosférica - Revisado</title>
 <style>
 /* ------------------------------
    CSS: Estabilidad (Fixed Structure)
@@ -12,13 +12,13 @@
   --topbar-height: 80px; 
   --color-primary: #2db1ff; 
   --color-secondary: #ff9f40;
-  --color-tertiary: #d3e605; /* Añadido */
-  --color-uv: #ffd54f; /* Color UV */
+  --color-tertiary: #d3e605;
+  --color-uv: rgba(255, 213, 79, 0.1); /* Color UV */
   --color-light: #ffd54f; 
-  --color-cfc: #82c42b; /* Color CFC actualizado */
+  --color-cfc: #82c42b;
   --color-acid: #b0c4de;
   --color-bg-light: #E0F7FA;
-  --color-bg-dark: #87CEFA;
+  --color-bg-dark: #87CEFA; /* Fondo Azul Claro/Cielo */
   --color-header-bg: linear-gradient(90deg, #0b3550, #062f44);
   --shadow-l: 0 8px 20px rgba(2, 12, 20, 0.35);
   --shadow-btn: 0 6px 12px rgba(0, 0, 0, 0.35); 
@@ -32,6 +32,7 @@ html, body {
   user-select: none; 
   touch-action: none; 
   overflow: hidden; 
+  background-color: var(--color-bg-light); /* Fondo del body por si falla el canvas */
 }
 
 /* Canvas ocupa toda la pantalla */
@@ -43,6 +44,7 @@ canvas {
   height: 100vh; 
   display: block; 
   z-index: 1; 
+  background-color: var(--color-bg-dark); /* Fondo del canvas, refuerzo */
 }
 
 /* Topbar superpuesta, fixed */
@@ -148,8 +150,8 @@ canvas {
 
 <div id="topbar" role="banner" aria-live="polite">
   <div>
-    <div id="title">Laboratorio del Aire — Simulación Interactiva</div>
-    <div id="subtitle">Arrastra (click y mantiene) para mover y acercar moléculas</div>
+    <div id="title">Impacto Atmosférico — Simulador de Contaminantes y Reacciones</div>
+    <div id="subtitle">Arrastra una molécula sobre otra para que reaccionen.</div>
   </div>
   <div id="reaction">Última reacción: **Esperando interacción**</div>
   <div class="metrics" role="status">
@@ -172,7 +174,7 @@ canvas {
 </div>
 
 <div id="modal" role="dialog" aria-modal="true" style="display:none;">
-    <div class="close" id="closeModal" role="button" aria-label="Cerrar ventana emergente">✕</div>
+    <div class="close" id="closeModal" role="button" aria-label="Cerrar ventana emergente"><b>✕</b></div>
     
     <h2>🔬 Guía Rápida de Reacciones Atmosféricas</h2>
 
@@ -201,11 +203,11 @@ canvas {
     </tr>
     <tr>
       <td><b>Destrucción Natural (Filtro UV)</b></td>
-      <td>UV + O₃ → O₂ + O</td>
+      <td>☀️ + O₃ → O₂ + O</td>
     </tr>
     <tr>
       <td><b>Activación de CFC</b></td>
-      <td>UV + CFC → Cl (átomo de cloro)</td>
+      <td>☀️ + CFC → Cl (átomo de cloro)</td>
     </tr>
     <tr>
       <td><b>Ciclo Catalítico del Cloro</b></td>
@@ -237,7 +239,7 @@ canvas {
   <tbody>
     <tr>
       <td><b>Formación de Radicales OH (energía UV)</b></td>
-      <td>UV + H₂O → OH + H</td>
+      <td>☀️ + H₂O → OH + H</td>
     </tr>
     <tr>
       <td><b>Generación de NO por rayos</b></td>
@@ -259,8 +261,6 @@ canvas {
 </p>
 
 </div>
-<div id="legend">Arrastra una molécula sobre otra para que reaccionen.</div>
-
 <script>
 /* ------------------------------
     Canvas setup (FIXED)
@@ -270,6 +270,7 @@ const ctx = canvas.getContext('2d', { alpha: false });
 const topbar = document.getElementById('topbar');
 let W, H; 
 let INTERACT_TOP; 
+let sunColor;
 
 function resizeCanvas() {
     W = window.innerWidth;
@@ -278,10 +279,10 @@ function resizeCanvas() {
     canvas.height = H;
     
     const topbarHeight = topbar.offsetHeight + H * 0.01; 
-    INTERACT_TOP = topbarHeight + 10; 
+    INTERACT_TOP = topbarHeight + 50; 
     
-    sun.x = Math.max(70, W * 0.08); 
-    sun.y = Math.max(INTERACT_TOP - 30, H * 0.1); 
+    sun.x = Math.max(170, W * 0.08); 
+    sun.y = Math.max(INTERACT_TOP - 20, H * 0.1); 
     
     createClouds();
 }
@@ -290,7 +291,6 @@ window.addEventListener('resize', resizeCanvas);
 
 /* ------------------------------
     Constants & state (Molecule Definitions)
-    --- Usando DEFS del código original del usuario ---
     ------------------------------ */
 let molecules = []; 
 let effects = [];
@@ -298,6 +298,10 @@ let clouds = [];
 let nextId = 1;
 let selectedMolecule = null; 
 const sun = { x: 90, y: 90, r: 36 }; 
+const AIR_RESISTANCE = 0.95;
+const BOUNDARY_DAMPING = 5;
+const TOP_DAMPING = 0.85;
+const GRAVITY_BOOST = -0.004;
 
 const DEFS = {
     O2:    { label:'O₂', atoms:[{ax:-18,ay:0,rad:14,color:'#2abafa',label:'O'},{ax:18,ay:0,rad:14,color:'#2abafa',label:'O'}], bonds:[[0,1]] },
@@ -313,13 +317,31 @@ const DEFS = {
     HSO3:  { label:'HSO₃', atoms:[{ax:-22,ay:0,rad:16,color:'#d3e605',label:'S'},{ax:6,ay:-14,rad:14,color:'#2abafa',label:'O'},{ax:6,ay:8,rad:14,color:'#2abafa',label:'O'},{ax:26,ay:0,rad:8,color:'#3aa6fc',label:'H'}], bonds:[[0,1],[0,2],[0,3]] },
     H2SO4: { label:'H₂SO₄', atoms:[{ax:-26,ay:0,rad:16,color:'#d3e605',label:'S'},{ax:6,ay:-20,rad:14,color:'#2abafa',label:'O'},{ax:6,ay:-2,rad:14,color:'#2abafa',label:'O'},{ax:6,ay:16,rad:14,color:'#2abafa',label:'O'},{ax:26,ay:10,rad:8,color:'#3aa6fc',label:'H'}], bonds:[[0,1],[0,2],[0,3],[3,4]] },
     O:     { label:'O', atoms:[{ax:0,ay:0,rad:14,color:'#2abafa',label:'O'}], bonds:[] },
-    UV:    { label:'UV', atoms:[{ax:0,ay:0,rad:10,color:'var(--color-uv)',label:'UV RAY'}], bonds:[] }, 
+    UV:    { label:'UV', atoms:[{ax:0,ay:0,rad:30,color:'var(--color-uv)',label:'☀️'}], bonds:[] }, 
     CFC:   { label:'CFC', atoms:[{ax:0,ay:0,rad:16,color:'#333',label:'C'},{ax:-16,ay:-10,rad:11,color:'#825217',label:'F'},{ax:16,ay:-10,rad:10,color:'#82c42b',label:'Cl'},{ax:0,ay:18,rad:10,color:'#82c42b',label:'Cl'},{ax:-16,ay:10,rad:10,color:'#82c42b',label:'Cl'}], bonds:[[0,1],[0,2],[0,3],[0,4]] },
     Cl:    { label:'Cl', atoms:[{ax:0,ay:0,rad:10,color:'#82c42b',label:'Cl'}], bonds:[] },
     ClO:   { label:'ClO', atoms:[{ax:-12,ay:0,rad:10,color:'#82c42b',label:'Cl'},{ax:12,ay:0,rad:14,color:'#2abafa',label:'O'}], bonds:[[0,1]] },
     HNO3:  { label:'HNO₃', atoms:[{ax:-20,ay:0,rad:12,color:'#f7a643',label:'N'},{ax:10,ay:-14,rad:14,color:'#2abafa',label:'O'},{ax:10,ay:10,rad:14,color:'#2abafa',label:'O'},{ax:26,ay:0,rad:8,color:'#3aa6fc',label:'H'}], bonds:[[0,1],[0,2],[2,3]] },
     HCl:   { label:'HCl', atoms:[{ax:-12,ay:0,rad:10,color:'#82c42b',label:'Cl'},{ax:12,ay:0,rad:8,color:'#3aa6fc',label:'H'}], bonds:[[0,1]] }
 };
+
+
+/* ------------------------------
+    UI & Metrics (Declaradas para prevenir 'no definidas')
+    ------------------------------ */
+function updateMetrics(){
+    document.getElementById('totalVal').innerText = molecules.length;
+    document.getElementById('o3Val').innerText = molecules.filter(m=>m.type==='O3').length;
+    document.getElementById('cfcVal').innerText = molecules.filter(m=>m.type==='CFC').length;
+    document.getElementById('h2so4Val').innerText = molecules.filter(m=>m.type==='H2SO4' || m.type==='HNO3' || m.type==='HCl').length; 
+}
+function showReaction(txt) { 
+    document.getElementById('reaction').innerHTML = 'Última reacción: **' + txt + '**'; 
+    updateMetrics(); 
+}
+function flash(x,y, color){ effects.push({type:'flash',x,y,t:0,ttl:0.5, color:color}); }
+function ozoneHole(x,y){ effects.push({type:'ozone',x,y,t:0,ttl:1.1}); }
+function acidicCloud(x,y){ effects.push({type:'acid',x,y,t:0,ttl:1.6}); }
 
 
 /* ------------------------------
@@ -385,24 +407,17 @@ function produceLightning(x, y) {
 }
 
 function spawnUV() {
-    const uv = createMolecule('UV', sun.x + rand(-18, 18), sun.y + sun.r + rand(8, 20));
+    // La partícula UV es energía que se mueve rápidamente.
+    const uv = createMolecule('UV', sun.x + rand(-18, 18), sun.y + sun.r + rand(8, 2));
     if (uv) {
-        uv.vx = (W / 2 - uv.x) * 0.002 + rand(-0.02, 0.02);
-        uv.vy = (H / 2 - uv.y) * 0.002 + rand(-0.02, 0.02);
+        uv.vx = (W / 2 - uv.x) * 0.002 + rand(-0.08, 0.08); // Hacia el centro
+        uv.vy = (H / 2 - uv.y) * 0.002 + rand(-0.08, 0.08);
+        uv.r = 12; // Aumentar el radio de interacción
         showReaction('☀️ Sol: UV generado');
     }
 }
 
-function showReaction(txt) { 
-    document.getElementById('reaction').innerHTML = 'Última reacción: **' + txt + '**'; 
-    updateMetrics(); 
-}
-
-function flash(x,y, color){ effects.push({type:'flash',x,y,t:0,ttl:0.5, color:color}); }
-function ozoneHole(x,y){ effects.push({type:'ozone',x,y,t:0,ttl:1.1}); }
-function acidicCloud(x,y){ effects.push({type:'acid',x,y,t:0,ttl:1.6}); }
-
-// FUNCIÓN CRÍTICA CON REACCIONES COMPLETAS
+// FUNCIÓN CRÍTICA CON REACCIONES CORREGIDAS
 function reactPair(a, b) {
     const types = [a.type, b.type].sort(); 
     function remove(m) { molecules = molecules.filter(x => x !== m); }
@@ -411,22 +426,16 @@ function reactPair(a, b) {
 
     // 1. FORMACIÓN Y DESTRUCCIÓN DE OZONO NORMAL
     if (types[0] === 'O' && types[1] === 'O2') { remove(a); remove(b); spawn('O3', mx, my); showReaction('O₂ + O → O₃ (Formación de Ozono)'); flash(mx, my, '#ffffff'); return; }
-    if (types[0] === 'O3' && types[1] === 'UV') { remove(a); remove(b); spawn('O2', mx, my); spawn('O', mx, my + 8); showReaction('UV + O₃ → O₂ + O (Destrucción Normal de Ozono)'); ozoneHole(mx, my); return;}
+    // O3 con UV
+    if (types[0] === 'O3' && types[1] === 'UV') { remove(a); remove(b); spawn('O2', mx, my); spawn('O', mx, my + 8); showReaction('UV + O₃ → O₂ + O (Destrucción Natural de Ozono)'); ozoneHole(mx, my); return;}
 
     // 2. CICLO CATALÍTICO DEL CLORO (DESTRUCCIÓN POR CFC)
-    if (types[0] === 'CFC' && types[1] === 'UV') { remove(a); remove(b); spawn('Cl', mx, my); spawn('CO2', mx + 10, my - 10); showReaction('CFC + UV → Cl + CO₂ + Productos (Liberación Catalítica)'); acidicCloud(mx, my); return;}
+    // CORRECCIÓN: CFC + UV ya no libera CO2, solo el Cl catalítico.
+    if (types[0] === 'CFC' && types[1] === 'UV') { remove(a); remove(b); spawn('Cl', mx, my); showReaction('CFC + UV → Cl + Fragmentos (Liberación Catalítica)'); acidicCloud(mx, my); return;}
     
-    // Formación de HCl por CFC y OH (Mantenida por si se desea usar, aunque se eliminó del popup simplificado)
-    if (types[0] === 'CFC' && types[1] === 'OH') { 
-        remove(a); remove(b); 
-        spawn('HCl', mx - 10, my); 
-        spawn('Cl', mx + 10, my); 
-        showReaction('CFC + OH → HCl + Cl (Formación de Ácido Clorhídrico)'); 
-        acidicCloud(mx, my); 
-        return;
-    }
-
+    // Cl + O3
     if (types[0] === 'Cl' && types[1] === 'O3') { remove(a); remove(b); spawn('ClO', mx, my); spawn('O2', mx + 10, my - 10); showReaction('Cl + O₃ → ClO + O₂ (Paso 1: Destrucción Ozono)'); ozoneHole(mx, my); return;}
+    // ClO + O (Regeneración del Cl)
     if (types[0] === 'ClO' && types[1] === 'O') { 
         remove(a); remove(b); 
         spawn('Cl', mx, my); 
@@ -445,22 +454,23 @@ function reactPair(a, b) {
         ozoneHole(mx, my); 
         return;
     }
-
-    if (types[0] === 'NO2' && types[1] === 'O') {
-        remove(a); remove(b);
-        spawn('NO', mx, my);
-        spawn('O2', mx + 10, my - 10);
-        showReaction('NO₂ + O → NO + O₂ (Regeneración de NO - Paso 2)');
-        ozoneHole(mx, my); 
-        return;
-    }
     
     // 3. LLUVIA ÁCIDA (Preparación de radicales)
+    // H2O con UV
     if (types[0] === 'H2O' && types[1] === 'UV') { remove(a); remove(b); spawn('OH', mx, my); spawn('H', mx + 6, my + 6); showReaction('UV + H₂O → OH + H (Formación de Radicales)'); return;}
     
+    // **Manejador de colisión de UV:** Si UV choca con algo y no reacciona, se consume.
+    if (a.type === 'UV') { remove(a); showReaction(`UV absorbido por ${b.label}`); return; }
+    if (b.type === 'UV') { remove(b); showReaction(`UV absorbido por ${a.label}`); return; }
+    
     // 4. LLUVIA ÁCIDA (Sulfúrico)
-    if (types[0] === 'OH' && types[1] === 'SO2') { remove(a); remove(b); spawn('HSO3', mx, my); showReaction('SO₂ + OH → HSO₃'); acidicCloud(mx, my); return;}
-    if (types[0] === 'HSO3' && types[1] === 'O') { remove(a); remove(b); spawn('H2SO4', mx, my); showReaction('HSO₃ + O → H₂SO₄ (Ácido Sulfúrico)'); acidicCloud(mx, my); return;}
+    if (types[0] === 'OH' && types[1] === 'SO2') { 
+        remove(a); remove(b); 
+        spawn('H2SO4', mx, my); // Simplificado: SO2 + OH + (otra H2O/O) -> H2SO4
+        showReaction('SO₂ + OH → H₂SO₄ (Ácido Sulfúrico Simplificado)'); 
+        acidicCloud(mx, my); 
+        return;
+    }
     
     // 5. LLUVIA ÁCIDA (Nítrico)
     if (types[0] === 'NO2' && types[1] === 'OH') { 
@@ -485,7 +495,6 @@ function reactPair(a, b) {
 function checkNeighborsForReaction(m) {
     for (const other of molecules) {
         if (other === m) continue;
-        // Colisión menos estricta para reacciones
         const collisionThreshold = Math.max((m.r + other.r) * 0.95, 55); 
         if (Math.hypot(m.x - other.x, m.y - other.y) < collisionThreshold) {
             reactPair(m, other); 
@@ -496,9 +505,10 @@ function checkNeighborsForReaction(m) {
 
 
 /* ------------------------------
-    Input Handling
+    Input Handling (Mantenido)
     ------------------------------ */
 canvas.addEventListener('mousedown', (e) => {
+    // ... (El código de mouse down se mantiene igual, ya que parece funcionar)
     const px = e.clientX, py = e.clientY; 
     
     let clickedCloud = false;
@@ -575,6 +585,7 @@ function updateEffects(dt){
     for(let i=effects.length-1;i>=0;i--){ const e=effects[i]; e.t += dt; if(e.t > e.ttl) effects.splice(i,1); }
 }
 function drawEffects(){
+    // ... (Se mantiene igual)
     for(const e of effects){
         const p = e.t / e.ttl; ctx.globalAlpha = 1 - p; 
         if(e.type==='ozone'){ ctx.fillStyle = 'rgba(20,30,80,0.6)'; ctx.beginPath(); ctx.ellipse(e.x,e.y, 110*(1-p)+10, 60*(1-p)+10,0,0,Math.PI*2); ctx.fill();
@@ -585,6 +596,7 @@ function drawEffects(){
     }
 }
 function drawMolecule(m){
+    // ... (Se mantiene igual, la lógica de dibujo es correcta)
     // Dibujo de enlaces
     ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.4)';
     for(const bp of (m.bonds||[])){ 
@@ -643,12 +655,7 @@ function drawClouds(dt){
 }
 function stepPhysics(dt){
     const TIME_FACTOR = dt * 60;
-    const AIR_RESISTANCE = 0.95; 
-    const BOUNDARY_DAMPING = 0.4;
-    // Damping reducido de 1.5 a 0.85 para colisiones más suaves
-    const TOP_DAMPING = 0.85; 
-    const GRAVITY_BOOST = -0.008; 
-
+    
     for(const m of molecules){
         if(!m.fixed){
             m.vy += GRAVITY_BOOST * TIME_FACTOR; 
@@ -676,43 +683,18 @@ function stepPhysics(dt){
 
 
 /* ------------------------------
-    UI & Metrics
-    ------------------------------ */
-setInterval(()=>{ molecules = molecules.filter(m => !(m.y < -200 || m.x < -400 || m.x > W + 400 || m.y > H + 400)); }, 7000);
-
-document.querySelectorAll('#controls .roundBtn').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-        const t = btn.dataset.type;
-        if(t && t !== 'UV') spawnFromBottom(t,1);
-    });
-});
-document.getElementById('btnLightning').addEventListener('click', ()=>{ 
-    produceLightning(W*0.5 + rand(-140,140), H * 0.15 + rand(0,60)); 
-    showReaction('⚡ Rayo generado manualmente');
-});
-document.getElementById('btnUV').addEventListener('click', spawnUV); 
-document.getElementById('popupBtn').addEventListener('click', ()=>{ document.getElementById('modal').style.display='block'; });
-document.getElementById('closeModal').addEventListener('click', ()=>{ document.getElementById('modal').style.display='none'; });
-
-function updateMetrics(){
-    document.getElementById('totalVal').innerText = molecules.length;
-    document.getElementById('o3Val').innerText = molecules.filter(m=>m.type==='O3').length;
-    document.getElementById('cfcVal').innerText = molecules.filter(m=>m.type==='CFC').length;
-    document.getElementById('h2so4Val').innerText = molecules.filter(m=>m.type==='H2SO4' || m.type==='HNO3' || m.type==='HCl').length; 
-}
-setInterval(updateMetrics, 800);
-
-
-/* ------------------------------
-    Animation loop (Fondo Forzado)
+    Animation loop (Fondo CORREGIDO)
     ------------------------------ */
 let last = performance.now();
+const BG_COLOR = getComputedStyle(document.documentElement).getPropertyValue('--color-bg-dark').trim() || '#87CEFA';
+
 function loop(ts){
     if (!W || !H || INTERACT_TOP === undefined) return requestAnimationFrame(loop); 
     
     const dt = Math.min(0.06, (ts - last)/1000); last = ts;
     
-    ctx.fillStyle = '#80d8ff'; 
+    // Usar la variable CSS para el color de fondo
+    ctx.fillStyle = BG_COLOR; 
     ctx.fillRect(0,0,W,H); 
     
     drawSun();
@@ -734,16 +716,36 @@ function loop(ts){
 function seed(){ 
     if (!W || !H || INTERACT_TOP === undefined) return; 
 
-    spawnFromBottom('O2', 5);
-    spawnFromBottom('N2', 3); 
+    spawnFromBottom('O2', 1);
+    spawnFromBottom('N2', 1); 
     spawnFromBottom('H2O', 2);
-    spawnFromBottom('CO2',1); 
-    spawnFromBottom('CFC', 1); 
-    createMolecule('O3', W * 0.55, INTERACT_TOP + 150); 
+    spawnFromBottom('CO2',2); 
+    spawnFromBottom('CFC', 2); 
+    createMolecule('O3', W * 0.55, INTERACT_TOP + 100); 
+    createMolecule('O3', W * 0.85, INTERACT_TOP + 110);
+    createMolecule('O3', W * 0.25, INTERACT_TOP + 105);
     spawnUV();
     
     requestAnimationFrame(loop);
 }
+
+// Event Listeners (Mantenidos)
+document.querySelectorAll('#controls .roundBtn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+        const t = btn.dataset.type;
+        if(t && t !== 'UV') spawnFromBottom(t,1);
+    });
+});
+document.getElementById('btnLightning').addEventListener('click', ()=>{ 
+    produceLightning(W*0.5, H * 0.15); 
+    showReaction('⚡ Rayo generado manualmente');
+});
+document.getElementById('btnUV').addEventListener('click', spawnUV); 
+document.getElementById('popupBtn').addEventListener('click', ()=>{ document.getElementById('modal').style.display='block'; });
+document.getElementById('closeModal').addEventListener('click', ()=>{ document.getElementById('modal').style.display='none'; });
+setInterval(()=>{ molecules = molecules.filter(m => !(m.y < -200 || m.x < -400 || m.x > W + 400 || m.y > H + 400)); }, 7000);
+setInterval(updateMetrics, 800);
+
 
 // Asegurar que resizeCanvas() se llame primero para definir W, H, INTERACT_TOP
 window.onload = () => {

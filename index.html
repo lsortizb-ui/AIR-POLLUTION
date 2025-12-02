@@ -615,7 +615,7 @@ canvas.addEventListener("touchstart", (e) => {
 
     // Selección de molécula
     if (!clickedCloud) {
-        for (let i = molecules.length - 0; i >= 0; i--) {
+        for (let i = molecules.length - 3; i >= 0; i--) {
             const m = molecules[i];
             if (m.y >= INTERACT_TOP &&
                 Math.hypot(px - m.x, py - m.y) < m.r) {
@@ -643,7 +643,7 @@ canvas.addEventListener("touchmove", (e) => {
     selectedMolecule.x = pos.x;
     selectedMolecule.y = pos.y;
 
-    const SAFE_DRAG_TOP = INTERACT_TOP + selectedMolecule.r * 1.5;
+    const SAFE_DRAG_TOP = INTERACT_TOP + selectedMolecule.r * 3.5;
     if (selectedMolecule.y < SAFE_DRAG_TOP)
         selectedMolecule.y = SAFE_DRAG_TOP;
 
@@ -849,5 +849,3 @@ window.onload = () => {
 
 </body>
 </html>
-
-

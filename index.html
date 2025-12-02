@@ -577,6 +577,99 @@ canvas.addEventListener('mouseup', () => {
     }
 });
 
+/* -------------------------------------------
+   EVENTOS TOUCH para iPad, OneScreen y tablets
+   ------------------------------------------- */
+
+// Convierte coordenadas táctiles → coordenadas canvas
+function getTouchPos(evt) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+        x: evt.touches[0].clientX - rect.left,
+        y: evt.touches[0].clientY - rect.top
+    };
+}
+
+canvas.addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    const pos = getTouchPos(e);
+    const px = pos.x, py = pos.y;
+
+    let clickedCloud = false;
+
+    // Tocar nube = rayo
+    for (const c of clouds) {
+        if (px > c.x - c.w && px < c.x + c.w &&
+            py > c.y - c.h && py < c.y + c.h) {
+            produceLightning(px, py);
+            clickedCloud = true;
+            return;
+        }
+    }
+
+    // Tocar sol = UV
+    if (Math.hypot(px - sun.x, py - sun.y) < sun.r) {
+        spawnUV();
+        return;
+    }
+
+    // Selección de molécula
+    if (!clickedCloud) {
+        for (let i = molecules.length - 1; i >= 0; i--) {
+            const m = molecules[i];
+            if (m.y >= INTERACT_TOP &&
+                Math.hypot(px - m.x, py - m.y) < m.r) {
+
+                m.fixed = true;
+                m.vx = 0;
+                m.vy = 0;
+                m.x = px;
+                m.y = py;
+
+                selectedMolecule = m;
+                molecules.splice(i, 1);
+                molecules.push(m);
+                return;
+            }
+        }
+    }
+});
+
+canvas.addEventListener("touchmove", (e) => {
+    e.preventDefault();
+    if (!selectedMolecule) return;
+
+    const pos = getTouchPos(e);
+    selectedMolecule.x = pos.x;
+    selectedMolecule.y = pos.y;
+
+    const SAFE_DRAG_TOP = INTERACT_TOP + selectedMolecule.r * 1.5;
+    if (selectedMolecule.y < SAFE_DRAG_TOP)
+        selectedMolecule.y = SAFE_DRAG_TOP;
+
+    checkNeighborsForReaction(selectedMolecule);
+});
+
+canvas.addEventListener("touchend", (e) => {
+    e.preventDefault();
+
+    if (selectedMolecule) {
+        const m = selectedMolecule;
+        m.fixed = false;
+        m.vx = 0;
+        m.vy = 0;
+
+        setTimeout(() => {
+            if (!m.fixed) {
+                m.vx = rand(-0.2, 0.2);
+                m.vy = rand(-0.2, 0.2);
+            }
+        }, 200);
+
+        selectedMolecule = null;
+        showReaction("Molécula liberada (touch)");
+    }
+});
 
 /* ------------------------------
     Drawing & Physics

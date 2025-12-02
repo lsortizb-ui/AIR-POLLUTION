@@ -615,7 +615,7 @@ canvas.addEventListener("touchstart", (e) => {
 
     // Selección de molécula
     if (!clickedCloud) {
-        for (let i = molecules.length - 1; i >= 0; i--) {
+        for (let i = molecules.length - 0; i >= 0; i--) {
             const m = molecules[i];
             if (m.y >= INTERACT_TOP &&
                 Math.hypot(px - m.x, py - m.y) < m.r) {
@@ -849,3 +849,4 @@ window.onload = () => {
 
 </body>
 </html>
+
